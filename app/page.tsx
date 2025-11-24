@@ -5,84 +5,86 @@ import * as tf from "@tensorflow/tfjs";
 import JSZip from "jszip";
 
 export default function Home() {
-  // Modelos independientes
-  const [modelSuma, setModelSuma] = useState<tf.LayersModel | null>(null);
-  const [modelResta, setModelResta] = useState<tf.LayersModel | null>(null);
+  const [modeloSuma, setModeloSuma] = useState<tf.LayersModel | null>(null);
+  const [modeloResta, setModeloResta] = useState<tf.LayersModel | null>(null);
 
-  // UI
   const [operacion, setOperacion] = useState<"suma" | "resta">("suma");
   const [mensaje, setMensaje] = useState<string>("");
+
   const [numA, setNumA] = useState<string>("");
   const [numB, setNumB] = useState<string>("");
 
-  // ============================================
-  // 🔥 Cargar ambos modelos desde el ZIP
-  // ============================================
-  async function cargarModelosZIP() {
+  // --------------------------
+  // 🚀 Cargar ZIP desde /public
+  // --------------------------
+  async function cargarModelos() {
     try {
-      setMensaje("Cargando modelos desde ZIP...");
+      setMensaje("Cargando modelos desde modelo_resta.zip ...");
 
-      // Tu ZIP debe estar en /public
-      const response = await fetch("/modelos.zip");
+      const response = await fetch("/modelo_resta.zip");
       const blob = await response.blob();
-      const buffer = await blob.arrayBuffer();
+      const buf = await blob.arrayBuffer();
 
-      const zip = await JSZip.loadAsync(buffer);
+      const zip = await JSZip.loadAsync(buf);
 
-      // Función auxiliar para cargar un modelo dentro de una carpeta
-      async function cargarModeloDesdeCarpeta(carpeta: string) {
-        let modelJsonFile: File | null = null;
-        let weightsFile: File | null = null;
+      // MODELOS
+      let sumaJson: File | null = null;
+      let sumaBin: File | null = null;
 
-        for (const filename of Object.keys(zip.files)) {
-          if (filename.startsWith(carpeta) && filename.endsWith("model.json")) {
-            const jsonStr = await zip.files[filename].async("string");
-            modelJsonFile = new File([jsonStr], "model.json", {
-              type: "application/json",
-            });
-          }
+      let restaJson: File | null = null;
+      let restaBin: File | null = null;
 
-          if (filename.startsWith(carpeta) && filename.endsWith(".bin")) {
-            const binBuf = await zip.files[filename].async("arraybuffer");
-            weightsFile = new File([binBuf], "weights.bin", {
-              type: "application/octet-stream",
-            });
-          }
+      for (const filename of Object.keys(zip.files)) {
+        const file = zip.files[filename];
+
+        // SUMA ----------------------
+        if (filename.includes("modelo_suma") && filename.endsWith("model.json")) {
+          const jsonStr = await file.async("string");
+          sumaJson = new File([jsonStr], "model.json");
         }
 
-        if (!modelJsonFile || !weightsFile) {
-          throw new Error("Modelo incompleto dentro del ZIP: " + carpeta);
+        if (filename.includes("modelo_suma") && filename.endsWith(".bin")) {
+          const bin = await file.async("arraybuffer");
+          sumaBin = new File([bin], "group1-shard1of1.bin");
         }
 
-        return await tf.loadLayersModel(
-          tf.io.browserFiles([modelJsonFile, weightsFile])
-        );
+        // RESTA ----------------------
+        if (filename.includes("modelo_resta") && filename.endsWith("model.json")) {
+          const jsonStr = await file.async("string");
+          restaJson = new File([jsonStr], "model.json");
+        }
+
+        if (filename.includes("modelo_resta") && filename.endsWith(".bin")) {
+          const bin = await file.async("arraybuffer");
+          restaBin = new File([bin], "group1-shard1of1.bin");
+        }
       }
 
-      // Cargar suma
-      const suma = await cargarModeloDesdeCarpeta("modelo_suma");
-      setModelSuma(suma);
+      if (!sumaJson || !sumaBin || !restaJson || !restaBin) {
+        setMensaje("❌ El ZIP no contiene ambos modelos.");
+        return;
+      }
 
-      // Cargar resta
-      const resta = await cargarModeloDesdeCarpeta("modelo_resta");
-      setModelResta(resta);
+      // Cargar ambos
+      const modelSuma = await tf.loadLayersModel(tf.io.browserFiles([sumaJson, sumaBin]));
+      const modelResta = await tf.loadLayersModel(tf.io.browserFiles([restaJson, restaBin]));
+
+      setModeloSuma(modelSuma);
+      setModeloResta(modelResta);
 
       setMensaje("Modelos cargados correctamente 🎉");
-    } catch (error) {
-      console.error(error);
-      setMensaje("❌ Error al cargar los modelos");
+    } catch (err) {
+      console.error(err);
+      setMensaje("❌ Error cargando los modelos");
     }
   }
 
-  // ============================================
-  // ✨ Ejecutar predicción
-  // ============================================
-  async function predecir() {
-    const modelo =
-      operacion === "suma" ? modelSuma : modelResta;
-
-    if (!modelo) {
-      setMensaje("Primero carga los modelos");
+  // --------------------------
+  // 🚀 Predecir
+  // --------------------------
+  function predecir() {
+    if (!modeloSuma || !modeloResta) {
+      setMensaje("Carga los modelos primero");
       return;
     }
 
@@ -94,47 +96,43 @@ export default function Home() {
     const a = parseFloat(numA);
     const b = parseFloat(numB);
 
-    const entrada: tf.Tensor2D = tf.tensor2d([[a, b]]);
-    const pred = modelo.predict(entrada);
+    const entrada = tf.tensor2d([[a, b]]);
 
-    if (!pred || Array.isArray(pred)) {
-      setMensaje("Error en la predicción");
-      return;
+    let pred: tf.Tensor;
+
+    if (operacion === "suma") {
+      pred = modeloSuma.predict(entrada) as tf.Tensor;
+    } else {
+      pred = modeloResta.predict(entrada) as tf.Tensor;
     }
 
     const salida = pred.dataSync()[0];
+
     setMensaje(`Resultado de la ${operacion}: ${salida}`);
   }
 
   return (
     <div style={{ padding: 40, maxWidth: 500 }}>
-      <h1>Calculadora IA – Suma y Resta</h1>
+      <h1>Calculadora IA – Suma y Resta desde ZIP</h1>
 
-      {/* BOTÓN CARGAR ZIP */}
       <button
-        onClick={cargarModelosZIP}
-        style={{
-          padding: 10,
-          width: "100%",
-          background: "#444",
-          color: "white",
-          marginBottom: 20,
-        }}
+        onClick={cargarModelos}
+        style={{ padding: 10, width: "100%", marginBottom: 20 }}
       >
         Cargar modelos desde ZIP
       </button>
 
-      {/* SELECCIÓN DE OPERACIÓN */}
+      <h3>Selecciona operación</h3>
+
       <select
         value={operacion}
-        onChange={(e) => setOperacion(e.target.value as "suma" | "resta")}
-        style={{ padding: 8, width: "100%", marginBottom: 20 }}
+        onChange={(e) => setOperacion(e.target.value as any)}
+        style={{ padding: 10, width: "100%", marginBottom: 20 }}
       >
-        <option value="suma">Suma</option>
-        <option value="resta">Resta</option>
+        <option value="suma">Suma (+)</option>
+        <option value="resta">Resta (-)</option>
       </select>
 
-      {/* INPUTS */}
       <input
         type="number"
         placeholder="Número A"
@@ -151,7 +149,6 @@ export default function Home() {
         style={{ width: "100%", padding: 8 }}
       />
 
-      {/* BOTÓN DE PREDICCIÓN */}
       <button
         onClick={predecir}
         style={{
@@ -160,13 +157,12 @@ export default function Home() {
           width: "100%",
           background: "green",
           color: "white",
-          fontSize: 18,
         }}
       >
         Ejecutar predicción
       </button>
 
-      <p style={{ marginTop: 20, fontSize: 20 }}>{mensaje}</p>
+      <p style={{ marginTop: 20 }}>{mensaje}</p>
     </div>
   );
 }
